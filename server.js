@@ -24,6 +24,7 @@ admin.initializeApp({
     auth_provider_x509_cert_url: process.env.auth_provider_x509_cert_url,
     client_x509_cert_url: process.env.client_x509_cert_url,
   }),
+  databaseURL: "https://gasup-c156c-default-rtdb.asia-southeast1.firebasedatabase.app"
 });
 
 async function decodeIDToken(req, res, next) {

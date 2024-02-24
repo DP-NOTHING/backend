@@ -5,6 +5,7 @@ module.exports = {
   apis: function (app, admin) {
     app.post("/api/signUp", async (req, res, next) => {
       console.log("signup");
+      console.log(req.body);
       if (req && req.body) {
         // Get the user information to add to the account
         console.log(req.body);
