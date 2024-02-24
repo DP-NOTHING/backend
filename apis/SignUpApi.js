@@ -1,8 +1,11 @@
-const axios = require("axios");
+const express = require('express');
+const router = express.Router();
+const {User} = require('../db/schema'); // Import Mongoose User model
+// const bcrypt = require('bcryptjs');
 
 module.exports = {
   // APIs
-  apis: function (app, admin) {
+  apis: function (app) {
     app.post("/api/signUp", async (req, res, next) => {
       console.log("signup");
       console.log(req.body);
@@ -12,13 +15,10 @@ module.exports = {
         let user_email = req.body["email"].toLowerCase();
         let first_name = req.body["firstName"];
         let last_name = req.body["lastName"];
-        // Add the user to the the databse
-        console.log(user_email);
-        admin
-          .firestore()
-          .collection("users")
-          .doc(`deep123@gmail.com`)
-          .set({
+
+        try {
+          // Create a new user document
+          const newUser = new User({
             email: user_email,
             first: first_name,
             last: last_name,
@@ -29,9 +29,17 @@ module.exports = {
             friends: [],
             balance: 0,
           });
-        res.status(200).json({ info: `${user_email} created` });
+          
+          // Save the user to MongoDB
+          await newUser.save();
+
+          res.status(200).json({ info: `${user_email} created` });
+        } catch (error) {
+          console.error("Error creating user:", error);
+          res.status(500).json({ error: "Internal server error" });
+        }
       } else {
-        res.status(204).json({ info: "No request body specfied" });
+        res.status(400).json({ error: "Bad request" });
       }
     });
 
@@ -40,60 +48,63 @@ module.exports = {
         // Get the user and the friend email
         let friend_email = req.body["friend_email"];
         let user_email = req.body["user_email"];
-        // Get the current list of friends
-        let friends_list = await admin
-          .firestore()
-          .collection("users")
-          .doc(`${user_email}`)
-          .get();
-        friends_list = friends_list.data()["friends"];
 
-        // Add new friend to the list of friends
-        friends_list.push(friend_email);
-        admin
-          .firestore()
-          .collection("users")
-          .doc(user_email)
-          .update({ friends: friends_list });
+        try {
+          // Find the user by email and update their friends list
+          await User.findOneAndUpdate(
+            { email: user_email },
+            { $push: { friends: friend_email } }
+          );
 
-        res.status(200).json({ info: `Friend ${friend_email} added` });
+          res.status(200).json({ info: `Friend ${friend_email} added` });
+        } catch (error) {
+          console.error("Error adding friend:", error);
+          res.status(500).json({ error: "Internal server error" });
+        }
       } else {
-        res.status(204).json({ info: "No Request Specified" });
+        res.status(400).json({ error: "Bad request" });
       }
     });
 
     app.post("/api/getFriends", async (req, res, next) => {
       if (req && req.body) {
-        // Get the user and the friend email
+        // Get the user email
         let email = req.body["email"];
-        // Get the current list of friends
-        let friends_list = await admin
-          .firestore()
-          .collection("users")
-          .doc(`${email}`)
-          .get();
-        friends_list = friends_list.data()["friends"];
 
-        let output = [];
-        for (let i = 0; i < friends_list.length; i++) {
-          let friend_doc = await admin
-            .firestore()
-            .collection("users")
-            .doc(`${friends_list[i]}`)
-            .get();
+        try {
+          // Find the user by email
+          const user = await User.findOne({ email });
 
-          if (friend_doc && friend_doc.exists) {
-            let data = {
-              name: friend_doc.data().first,
-              email: friends_list[i],
-            };
-            output.push(data);
+          if (!user) {
+            return res.status(404).json({ error: "User not found" });
           }
-        }
 
-        res.status(200).json(output);
+          // Extract friends list
+          const friends_list = user.friends;
+
+          let output = [];
+          for (let i = 0; i < friends_list.length; i++) {
+            let friend_email = friends_list[i];
+
+            // Find friend's details by email
+            const friend = await User.findOne({ email: friend_email });
+
+            if (friend) {
+              let data = {
+                name: friend.first,
+                email: friend_email,
+              };
+              output.push(data);
+            }
+          }
+
+          res.status(200).json(output);
+        } catch (error) {
+          console.error("Error getting friends:", error);
+          res.status(500).json({ error: "Internal server error" });
+        }
       } else {
-        res.status(204).json({ info: "No Request Specified" });
+        res.status(400).json({ error: "Bad request" });
       }
     });
   },

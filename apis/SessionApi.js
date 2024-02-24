@@ -1,167 +1,144 @@
 const axios = require("axios");
+const {User} = require('../db/schema'); // Assuming you have defined the User model
+const {Session} = require('../db/schema'); // Assuming you have defined the Session model
+const {Transaction} = require('../db/schema'); // Assuming you have defined the Transaction model
+const {Invite} = require('../db/schema'); // Assuming you have defined the Invite model
 
 module.exports = {
   /**
-   *
-   * Start the
+   * Start the APIs
    */
-  apis: function (app, admin) {
+  apis: function (app) {
+    /**
+     * Accept Invite API
+     */
     app.post("/api/acceptInvite", async (req, res, next) => {
-      console.log(req.body);
       if (req && req.body) {
         let email = req.body["email"];
-        var invite = await admin
-          .firestore()
-          .collection("invites")
-          .doc(email)
-          .get();
-        console.log(invite.data());
+        try {
+          const invite = await Invite.findOne({ _id: email });
+          if (!invite) {
+            return res.status(404).json({ error: "Invite not found" });
+          }
 
-        var session_riders = await admin
-          .firestore()
-          .collection("sessions")
-          .doc(invite.data()["session"])
-          .get();
+          let session_riders = await Session.findOne({ _id: invite.session });
+          if (!session_riders) {
+            return res.status(404).json({ error: "Session not found" });
+          }
 
-        session_riders = session_riders.data()["riders"];
-        session_riders.push(email);
-        await admin
-          .firestore()
-          .collection("sessions")
-          .doc(invite.data()["session"])
-          .update({ riders: session_riders });
+          session_riders.riders.push(email);
+          await session_riders.save();
 
-        await admin.firestore().collection("invites").doc(email).delete();
+          await Invite.deleteOne({ _id: email });
 
-        res.status(200).json(invite.data());
+          res.status(200).json(invite);
+        } catch (error) {
+          console.error("Error accepting invite:", error);
+          res.status(500).json({ error: "Internal server error" });
+        }
       } else {
-        res.status(204).json({ info: "No session specified" });
+        res.status(400).json({ info: "No session specified" });
       }
     });
 
     /**
-     * Copy session data into transactions
+     * End Drive API
      */
     app.post("/api/endDrive", async (req, res, next) => {
       if (req && req.body) {
-        // Get the running session
         let session_id = req.body["session_id"];
-        console.log(session_id);
-        // Get the driver account for gas mileadge
-        let driver_account = await admin
-          .firestore()
-          .collection("users")
-          .doc(session_id)
-          .get();
+        try {
+          let driver_account = await User.findById(session_id);
+          if (!driver_account) {
+            return res.status(404).json({ error: "Driver account not found" });
+          }
 
-        // get gas miledage
-        let mpg = driver_account.data()["car_data"]["avg_mpg"];
-        let driver_transactions = driver_account.data()["transactions"];
-        driver_transactions.push(session_id);
+          let mpg = driver_account.car_data.avg_mpg;
+          let driver_transactions = driver_account.transactions;
+          driver_transactions.push(session_id);
 
-        // Get the current dession data
-        var session = await admin
-          .firestore()
-          .collection("sessions")
-          .doc(session_id)
-          .get();
+          let session = await Session.findById(session_id);
+          if (!session) {
+            return res.status(404).json({ error: "Session not found" });
+          }
 
-        // Get the riders, drivers
-        let riders = session.data()["riders"];
-        let driver = session.data()["driver"];
-        let cost = (req.body["total_miles"] / mpg) * 3.95;
+          let { riders, driver } = session;
+          let cost = (req.body["total_miles"] / mpg) * 3.95;
 
-        // Create a transaction reciept
-        admin.firestore().collection("transactions").doc(session_id).set({
-          driver: driver,
-          riders: riders,
-          // Compute total cost based on mpg, miles , and estimated gas price
-          cost: cost,
-        });
+          await Transaction.create({
+            _id: session_id,
+            driver,
+            riders,
+            cost
+          });
 
-        await admin
-          .firestore()
-          .collection("users")
-          .doc(session_id)
-          .update({ transactions: driver_transactions });
+          await User.findByIdAndUpdate(session_id, { transactions: driver_transactions });
 
-        // Iterate through each rider in the session and add the new transaction to their account
-        for (i = 0; i < riders.length; i++) {
-          console.log("rider" + riders[i]);
-          let rider = await admin
-            .firestore()
-            .collection("users")
-            .doc(riders[i])
-            .get();
+          for (let i = 0; i < riders.length; i++) {
+            let rider = await User.findById(riders[i]);
+            if (rider) {
+              let { transactions, balance } = rider;
+              transactions.push(session_id);
+              await User.findByIdAndUpdate(riders[i], { transactions, balance: balance + cost });
+            }
+          }
 
-          let transactions = rider.data()["transactions"];
-          let balance = rider.data()["balance"];
-          transactions.push(session_id);
+          await Session.findByIdAndDelete(session_id);
 
-          await admin
-            .firestore()
-            .collection("users")
-            .doc(riders[i])
-            .update({
-              transactions: transactions,
-              balance: balance + cost,
-            });
-
-          await admin
-            .firestore()
-            .collection("sessions")
-            .doc(session_id)
-            .delete();
+          res.status(200).json({ info: "Drive ended successfully!" });
+        } catch (error) {
+          console.error("Error ending drive:", error);
+          res.status(500).json({ error: "Internal server error" });
         }
-        res.status(200).json({ info: "working2!" });
       } else {
-        res.status(204).json({ info: "No session specified" });
+        res.status(400).json({ info: "No session specified" });
       }
     });
 
     /**
-     * Copy session data into transactions
+     * Update Cost API
      */
     app.post("/api/updateCost", async (req, res, next) => {
       if (req && req.body) {
-        // Get a running session
         let driver_email = req.body["session_id"];
+        try {
+          let driver = await User.findById(driver_email);
+          if (!driver) {
+            return res.status(404).json({ error: "Driver not found" });
+          }
 
-        // Create a transaction reciept
-        let driver = admin
-          .firestore()
-          .collection("users")
-          .doc(driver_email)
-          .get();
+          let mpg = driver.car_data.avg_mpg;
+          // Perform further operations if needed...
 
-        let mpg = driver.data()["car_data"];
-
-        res.status(200).json({ info: "working2!" });
+          res.status(200).json({ info: "Cost updated successfully!" });
+        } catch (error) {
+          console.error("Error updating cost:", error);
+          res.status(500).json({ error: "Internal server error" });
+        }
       } else {
-        res.status(204).json({ info: "No session specified" });
+        res.status(400).json({ info: "No session specified" });
       }
     });
 
     /**
-     * Copy session data into transactions
+     * Invite Friend API
      */
     app.post("/api/inviteFriend", async (req, res, next) => {
       if (req && req.body) {
-        // Get a running session
-        let friend_email = req.body["friend_email"];
-        let session_id = req.body["session"];
-
-        // Create a transaction reciept
-        let friend = admin
-          .firestore()
-          .collection("invites")
-          .doc(friend_email)
-          .set({ session: session_id });
-
-        res.status(200).json({ info: "Complte" });
+        let { friend_email, session } = req.body;
+        try {
+          await Invite.create({ _id: friend_email, session });
+          res.status(200).json({ info: "Invite sent successfully!" });
+        } catch (error) {
+          console.error("Error sending invite:", error);
+          res.status(500).json({ error: "Internal server error" });
+        }
       } else {
-        res.status(204).json({ info: "No session specified" });
+        res.status(400).json({ info: "No session specified" });
       }
     });
-  },
+
+    // Other APIs...
+
+  }
 };

@@ -1,66 +1,61 @@
 const axios = require("axios");
+const {User} = require('../db/schema'); // Assuming you have defined the User model
+const {Transaction} = require('../db/schema'); // Assuming you have defined the Transaction model
 
 module.exports = {
   // APIs
-  apis: function (app, admin) {
+  apis: function (app) {
     /**
      * Get transaction data for a user
      */
     app.post("/api/getTransaction", async (req, res, next) => {
       // Ensure that a request body was provided
       if (req && req.body) {
-        var transaction_id;
-        // Keep a list of transactions
-        let transactions_list = [];
-        // Getting user id dock id
-        let email = req.body["email"];
-        // Get the document in the database for the specified user
-        let doc = await admin
-          .firestore()
-          .collection("users")
-          .doc(`${email}`)
-          .get();
-        // Get the user transaction list
-        let transactions = doc.data()["transactions"];
-        // ensure that transactions exist
-        if (transactions) {
-          // Need to get teach transaction from the user
-          for (i = 0; i < transactions.length; i++) {
-            // Get rid of white spaces
-            transaction_id = transactions[i].replace(/\s/g, "");
-            // Get transcation form database
-            let transaction = await admin
-              .firestore()
-              .collection("transactions")
-              .doc(transaction_id)
-              .get();
-            // Build the list of transactions
-            transactions_list.push({
-              driver: transaction.data()["driver"],
-              cost: transaction.data()["cost"],
-            });
+        try {
+          const { email } = req.body;
+
+          const user = await User.findOne({ email });
+          if (!user) {
+            return res.status(404).json({ error: "User not found" });
           }
+
+          const transactions = await Transaction.find({ _id: { $in: user.transactions } });
+
+          let transactions_list = transactions.map(transaction => ({
+            driver: transaction.driver,
+            cost: transaction.cost,
+          }));
+
+          res.status(200).json(transactions_list);
+        } catch (error) {
+          console.error("Error fetching transactions:", error);
+          res.status(500).json({ error: "Internal server error" });
         }
-        // Return 200 code (succesful) and the lsit of transactions
-        res.status(200).json(transactions_list);
       } else {
-        res.status(205).json({ message: "Request Body Not Provided" });
+        res.status(400).json({ message: "Request Body Not Provided" });
       }
     });
 
+    /**
+     * Get user balance
+     */
     app.post("/api/getBalance", async (req, res, next) => {
       if (req && req.body) {
-        email = req.body["email"];
+        try {
+          const { email } = req.body;
 
-        let doc = await admin
-          .firestore()
-          .collection("users")
-          .doc(`${email}`)
-          .get();
+          const user = await User.findOne({ email });
+          if (!user) {
+            return res.status(404).json({ error: "User not found" });
+          }
 
-        res.status(200).json({ balance: doc.data()["balance"] });
+          res.status(200).json({ balance: user.balance });
+        } catch (error) {
+          console.error("Error fetching user balance:", error);
+          res.status(500).json({ error: "Internal server error" });
+        }
       } else {
-        res.status(205).json({ message: "Request Body Not Provided" });
+        res.status(400).json({ message: "Request Body Not Provided" });
       }
     });
   },
